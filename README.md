@@ -1,4 +1,4 @@
-# Survival-Line (生死線)
+# 生死線
 
 ## Quickstart
 
@@ -6,6 +6,8 @@
 pip install -r requirements.txt
 python -m sdx.serve             # open http://127.0.0.1:8765 in browser
 ```
+
+![生死線 chart — 0388.HK with the ladder, signals, and RSI/MACD/DMI panels](static/screenshot.png)
 
 淨係想睇一張靜態圖，唔開server？`python -m sdx.viz 0388.HK` 會渲染一個獨立HTML圖表。
 
