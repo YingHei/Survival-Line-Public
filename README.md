@@ -4,10 +4,8 @@
 
 ```
 pip install -r requirements.txt
-python -m sdx.serve             # http://127.0.0.1:8765
+python -m sdx.serve             # open http://127.0.0.1:8765 in browser
 ```
-
-係browser開http://127.0.0.1:8765, 生死線,訊號同指標會自動計算同畫出 — 預設用 yfinance，唔使API key、唔使config。
 
 淨係想睇一張靜態圖，唔開server？`python -m sdx.viz 0388.HK` 會渲染一個獨立HTML圖表。
 
