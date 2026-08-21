@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Data cache (OHLCV parquet, downloaded bars)
+data/cache/
+*.parquet
+
+# Secrets
+.env
+.env.local
+
+# Personal watchlist data — per-user, changes constantly, not something to
+# version control. See watchlists.example.json / watchlist_layout.example.json
+# for the schema; copy either to the bare filename to get started.
+watchlists.json
+watchlist_layout.json
+
+# Webull SDK debug logs (request signing details) — written to cwd by default.
+# TimedRotatingFileHandler appends a date suffix on rotation (the *.log.*
+# glob), so the bare filenames alone don't catch every rotated copy.
+webull_data_sdk.log
+webull_trade_sdk.log
+webull_data_streaming_sdk.log
+webull_data_sdk.log.*
+webull_trade_sdk.log.*
+webull_data_streaming_sdk.log.*
+
+# macOS
+.DS_Store
+data/cache/
+out/
+
+# Claude Code machine-local settings (absolute paths, per-machine permissions)
+.claude/settings.local.json
+
+# Vendored HKUDS/Vibe-Trading code — not part of this project
+frontend/
+MCP-BACKTEST-WORKFLOW.md
+scaffold_backtest.py
+
+# Brainstorming visual-companion session files
+.superpowers/

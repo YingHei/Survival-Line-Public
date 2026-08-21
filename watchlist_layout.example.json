@@ -1,0 +1,6 @@
+[
+  { "type": "ticker", "symbol": "AAPL" },
+  { "type": "ticker", "symbol": "VOO" },
+  { "type": "section", "id": "sec_example", "name": "HK", "collapsed": false },
+  { "type": "ticker", "symbol": "0700.HK" }
+]

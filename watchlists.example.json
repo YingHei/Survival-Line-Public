@@ -1,0 +1,26 @@
+{
+  "AAPL": {
+    "held": false,
+    "special": false,
+    "strategies": [],
+    "stages": [],
+    "patterns": [],
+    "name": "Apple Inc."
+  },
+  "VOO": {
+    "held": false,
+    "special": false,
+    "strategies": [],
+    "stages": [],
+    "patterns": [],
+    "name": "Vanguard S&P 500 ETF"
+  },
+  "0700.HK": {
+    "held": false,
+    "special": false,
+    "strategies": [],
+    "stages": [],
+    "patterns": [],
+    "name": "Tencent Holdings Limited"
+  }
+}

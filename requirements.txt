@@ -1,0 +1,8 @@
+fastapi==0.139.2
+uvicorn==0.51.0
+pydantic==2.13.4
+pandas==2.3.3
+numpy==2.4.6
+yfinance==1.5.1
+python-dotenv==1.2.2
+webull-openapi-python-sdk==2.0.17
