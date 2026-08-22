@@ -5,6 +5,7 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+out/
 
 # Python
 __pycache__/
@@ -15,7 +16,7 @@ venv/
 .ruff_cache/
 
 # Data cache (OHLCV parquet, downloaded bars)
-data/cache/
+data/*
 *.parquet
 
 # Secrets
@@ -40,8 +41,6 @@ webull_data_streaming_sdk.log.*
 
 # macOS
 .DS_Store
-data/cache/
-out/
 
 # Claude Code machine-local settings (absolute paths, per-machine permissions)
 .claude/settings.local.json
