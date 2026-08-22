@@ -431,6 +431,28 @@ def _ladder_payload_fields(
     }
 
 
+def indicator_params_out(params: dict) -> dict:
+    """The numeric settings behind a payload's ``labels``, for the
+    indicator-settings popover to pre-fill from (and for the frontend's
+    ``withIndicatorDefaults``/``recomputeIndicatorsFor``, which both expect
+    this exact nested shape) — labels are prose for reading, this is numbers
+    for editing, and parsing one back out of the other would be needless and
+    fragile. Also what `sdx.serve.index()` sends as ``defaultParams``, since
+    ``params`` itself (``SETTINGS["params"]``) is flat (``{"rsi": 9, ...}``),
+    not the nested shape the frontend needs.
+    """
+    return {
+        "rsi": {"period": params.get("rsi", 9), "signal": params.get("rsi_signal", 6)},
+        "macd": {
+            "fast": params.get("macd_fast", 12),
+            "slow": params.get("macd_slow", 26),
+            "signal": params.get("macd_signal", 9),
+        },
+        "dmi": {"di": params.get("di", 6), "adx": params.get("adx", 14)},
+        "volume": {"period": params.get("volume_ma", RALLY_VOLUME_MA)},
+    }
+
+
 def build_payload(
     df: pd.DataFrame,
     result: Optional[EngineResult],
@@ -440,6 +462,7 @@ def build_payload(
     alts: Optional[dict] = None,
     *,
     daily: bool = True,
+    _ladder_only: bool = False,
 ) -> dict:
     """Chart payload for one symbol.
 
@@ -447,7 +470,12 @@ def build_payload(
     外擴K setting. Their ladder-dependent fields are attached under
     ``payload["alt"][name]`` so the 畫圖 toggles can swap between them without a
     round trip — the rules change what the engine COMPUTES, not merely what is
-    drawn, so the browser cannot derive one ladder from another.
+    drawn, so the browser cannot derive one ladder from another. Only
+    ``LADDER_KEYS`` ever survives into ``payload["alt"][name]``, and
+    candles/volume/indicators are identical across every alt (same ``df``,
+    same ``params`` — only ``result`` differs), so each alt is built with
+    ``_ladder_only=True`` rather than a full recursive call whose
+    non-ladder fields would just be computed and immediately discarded.
 
     ``result`` is ``None`` for bars the ladder engine never ran over (a
     non-daily Webull interval — see openspec/changes/webull-streaming-data):
@@ -457,6 +485,9 @@ def build_payload(
     string for daily bars (Lightweight Charts' business-day format, matching
     every existing chart), a UNIX timestamp for intraday bars, which carry a
     time-of-day a date-only string would silently drop.
+
+    ``_ladder_only`` is internal — set only by the ``alts`` recursion above,
+    to skip straight to the ``LADDER_KEYS`` fields.
     """
     params = params or {}
     dates = (
@@ -465,114 +496,109 @@ def build_payload(
         else [int(d.timestamp()) for d in df.index]
     )
 
-    candles = [
-        {
-            "time": dates[i],
-            "open": float(df["open"].iloc[i]),
-            "high": float(df["high"].iloc[i]),
-            "low": float(df["low"].iloc[i]),
-            "close": float(df["close"].iloc[i]),
-        }
-        for i in range(len(df))
-    ]
+    if _ladder_only:
+        payload = {}
+    else:
+        # Pulled through numpy once per column/series rather than indexed
+        # bar-by-bar (``.iloc[i]`` in a Python loop over a multi-decade daily
+        # series was, by profiling, the dominant cost of building a payload).
+        # ``dtype=float`` matches the explicit ``float(...)`` the per-bar
+        # version used to do, so e.g. an int64 volume column still comes out
+        # as JSON floats, not ints.
+        opens = df["open"].to_numpy(dtype=float).tolist()
+        highs = df["high"].to_numpy(dtype=float).tolist()
+        lows = df["low"].to_numpy(dtype=float).tolist()
+        closes = df["close"].to_numpy(dtype=float).tolist()
+        volumes = df["volume"].to_numpy(dtype=float).tolist()
 
-    volume = [
-        {
-            "time": dates[i],
-            "value": float(df["volume"].iloc[i]),
-            "color": "#26a69a55"
-            if df["close"].iloc[i] >= df["open"].iloc[i]
-            else "#ef535055",
-        }
-        for i in range(len(df))
-    ]
-
-    # Sub-pane indicators. Lightweight Charts only draws — every value here is
-    # computed in Python and shared with the engine's own maths.
-    def ser(s):
-        return [
-            {"time": dates[i], "value": float(x)}
-            for i, x in enumerate(s)
-            if pd.notna(x)
+        candles = [
+            {"time": t, "open": o, "high": h, "low": l, "close": c}
+            for t, o, h, l, c in zip(dates, opens, highs, lows, closes)
         ]
 
-    # MAVOL — defaults to RALLY_VOLUME_MA (50), the same trailing average
-    # ``find_rally_attacks`` (好友反攻) checks 大量 against, drawn on the volume
-    # pane so that threshold is visible rather than implicit in the signal
-    # alone. User-editable via the volume pane's own gear-icon settings (see
-    # IND_META.volume in the JS below) — that only ever changes what's drawn,
-    # never ``RALLY_VOLUME_MA`` itself, so 好友反攻 keeps firing off the fixed
-    # 50-bar average it was calibrated against regardless of what's on screen.
-    volume_ma_period = params.get("volume_ma", RALLY_VOLUME_MA)
-    volume_ma = ser(df["volume"].rolling(volume_ma_period).mean())
-
-    r = rsi(df["close"], params.get("rsi", 9), params.get("rsi_signal", 6))
-    m = macd(
-        df["close"],
-        params.get("macd_fast", 12),
-        params.get("macd_slow", 26),
-        params.get("macd_signal", 9),
-    )
-    dm = dmi(
-        df["high"],
-        df["low"],
-        df["close"],
-        params.get("di", 6),
-        params.get("adx", 14),
-    )
-
-    indicators = {
-        "rsi": ser(r.rsi),
-        "rsiSignal": ser(r.signal),
-        "dif": ser(m.dif),
-        "dea": ser(m.dea),
-        "hist": [
+        volume = [
             {
-                "time": d0["time"],
-                "value": d0["value"],
-                "color": "#26a69a" if d0["value"] >= 0 else "#ef5350",
+                "time": t,
+                "value": v,
+                "color": "#26a69a55" if c >= o else "#ef535055",
             }
-            for d0 in ser(m.hist)
-        ],
-        "pdi": ser(dm.pdi),
-        "mdi": ser(dm.mdi),
-        "adx": ser(dm.adx),
-    }
+            for t, v, o, c in zip(dates, volumes, opens, closes)
+        ]
 
-    labels = {
-        "rsi": f"RSI({params.get('rsi', 9)}) · SMA({params.get('rsi_signal', 6)})",
-        "macd": (
-            f"MACD({params.get('macd_fast', 12)},"
-            f"{params.get('macd_slow', 26)},{params.get('macd_signal', 9)})"
-        ),
-        "dmi": f"DMI({params.get('di', 6)},{params.get('adx', 14)})",
-        "volume": f"Volume · MA({volume_ma_period})",
-    }
+        # Sub-pane indicators. Lightweight Charts only draws — every value here is
+        # computed in Python and shared with the engine's own maths.
+        def ser(s):
+            arr = s.to_numpy(dtype=float)
+            idx = (~pd.isna(arr)).nonzero()[0]
+            return [
+                {"time": dates[i], "value": v}
+                for i, v in zip(idx.tolist(), arr[idx].tolist())
+            ]
 
-    # The numeric settings behind `labels`, for the indicator-settings popover
-    # to pre-fill from — labels are prose for reading, params are numbers for
-    # editing, and parsing one back out of the other would be needless and
-    # fragile.
-    params_out = {
-        "rsi": {"period": params.get("rsi", 9), "signal": params.get("rsi_signal", 6)},
-        "macd": {
-            "fast": params.get("macd_fast", 12),
-            "slow": params.get("macd_slow", 26),
-            "signal": params.get("macd_signal", 9),
-        },
-        "dmi": {"di": params.get("di", 6), "adx": params.get("adx", 14)},
-        "volume": {"period": volume_ma_period},
-    }
+        # MAVOL — defaults to RALLY_VOLUME_MA (50), the same trailing average
+        # ``find_rally_attacks`` (好友反攻) checks 大量 against, drawn on the volume
+        # pane so that threshold is visible rather than implicit in the signal
+        # alone. User-editable via the volume pane's own gear-icon settings (see
+        # IND_META.volume in the JS below) — that only ever changes what's drawn,
+        # never ``RALLY_VOLUME_MA`` itself, so 好友反攻 keeps firing off the fixed
+        # 50-bar average it was calibrated against regardless of what's on screen.
+        volume_ma_period = params.get("volume_ma", RALLY_VOLUME_MA)
+        volume_ma = ser(df["volume"].rolling(volume_ma_period).mean())
 
-    payload = {
-        "symbol": symbol,
-        "candles": candles,
-        "volume": volume,
-        "volumeMa": volume_ma,
-        "indicators": indicators,
-        "params": params_out,
-        "labels": labels,
-    }
+        r = rsi(df["close"], params.get("rsi", 9), params.get("rsi_signal", 6))
+        m = macd(
+            df["close"],
+            params.get("macd_fast", 12),
+            params.get("macd_slow", 26),
+            params.get("macd_signal", 9),
+        )
+        dm = dmi(
+            df["high"],
+            df["low"],
+            df["close"],
+            params.get("di", 6),
+            params.get("adx", 14),
+        )
+
+        indicators = {
+            "rsi": ser(r.rsi),
+            "rsiSignal": ser(r.signal),
+            "dif": ser(m.dif),
+            "dea": ser(m.dea),
+            "hist": [
+                {
+                    "time": d0["time"],
+                    "value": d0["value"],
+                    "color": "#26a69a" if d0["value"] >= 0 else "#ef5350",
+                }
+                for d0 in ser(m.hist)
+            ],
+            "pdi": ser(dm.pdi),
+            "mdi": ser(dm.mdi),
+            "adx": ser(dm.adx),
+        }
+
+        labels = {
+            "rsi": f"RSI({params.get('rsi', 9)}) · SMA({params.get('rsi_signal', 6)})",
+            "macd": (
+                f"MACD({params.get('macd_fast', 12)},"
+                f"{params.get('macd_slow', 26)},{params.get('macd_signal', 9)})"
+            ),
+            "dmi": f"DMI({params.get('di', 6)},{params.get('adx', 14)})",
+            "volume": f"Volume · MA({volume_ma_period})",
+        }
+
+        params_out = indicator_params_out(params)
+
+        payload = {
+            "symbol": symbol,
+            "candles": candles,
+            "volume": volume,
+            "volumeMa": volume_ma,
+            "indicators": indicators,
+            "params": params_out,
+            "labels": labels,
+        }
 
     if result is not None:
         payload.update(_ladder_payload_fields(df, dates, result, down_arrows))
@@ -585,10 +611,16 @@ def build_payload(
         payload["patternAnchor5day"] = trend5["patternAnchor"]
 
         if alts:
+            # _ladder_payload_fields() itself returns more than LADDER_KEYS
+            # (classes/classOverlay/pivots too) — still filtered down here,
+            # same as before _ladder_only existed, just without recomputing
+            # candles/volume/indicators first only to throw them away.
             payload["alt"] = {
                 name: {
                     k: v
-                    for k, v in build_payload(df, res, symbol, down_arrows, params).items()
+                    for k, v in build_payload(
+                        df, res, symbol, down_arrows, params, _ladder_only=True
+                    ).items()
                     if k in LADDER_KEYS
                 }
                 for name, res in alts.items()
@@ -7186,12 +7218,13 @@ toggleBtn.addEventListener('click', e => {
   toggleSubPanes();
 });
 
-// Seed currentParams from whatever the server actually computed (every
-// symbol's payload carries the same shared settings), then, if a saved
-// preference exists, override it and recompute every symbol before the
-// first render() — so the very first paint already reflects it instead of
-// showing the server defaults and then visibly jumping.
-currentParams = withIndicatorDefaults(ALL.symbols[current].params);
+// Seed currentParams from ALL.defaultParams (the server's shared settings —
+// no symbol payload is preloaded any more, so this can't be read off one),
+// then, if a saved preference exists, override it and recompute every
+// symbol before the first render() — so the very first paint already
+// reflects it instead of showing the server defaults and then visibly
+// jumping.
+currentParams = withIndicatorDefaults(ALL.defaultParams);
 const savedParams = loadSavedParams();
 if (savedParams) {
   currentParams = withIndicatorDefaults(savedParams);
@@ -7228,7 +7261,7 @@ document.getElementById('obFraction').value = obCloseFraction;
 
 renderWatchlistPanel();
 renderAlertsPanel();
-// The alerts log isn't in the server-rendered __DATA__ payload (unlike
+// The alerts log isn't in the server-rendered initial payload (unlike
 // watchlist/layout) — fetched once here, then the panel re-renders with
 // real acked state once it lands. Renders once already above so the panel
 // isn't empty/stuck while this is in flight; that first pass just treats
@@ -7238,7 +7271,40 @@ fetch('/api/alerts/log').then(r => r.json()).then(log => {
   rebuildAlertLogMap();
   renderAlertsPanel();
 }).catch(err => console.error('alerts log fetch failed:', err.message));
+
+// symbolAlerts() needs ALL.symbols[sym] for every 持有/特別關注 symbol, not
+// just `current` (see its own comment) — no longer preloaded server-side
+// (index() ships an empty `symbols` map now), so background-fetch each one
+// here instead of blocking the page on all of them like the old eager
+// server-side fetch used to. A no-op wherever ALL.symbols[sym] is already
+// present — e.g. every symbol in a static export (sdx.viz.render()) still
+// ships fully preloaded, so this never issues a request there at all.
+async function preloadAlertSymbols() {
+  const eager = Object.keys(watchlist).filter(sym =>
+    sym !== current && (watchlist[sym].held || watchlist[sym].special));
+  await Promise.all(eager.map(async sym => {
+    if (ALL.symbols[sym]) return;
+    try {
+      const res = await fetch('/api/bars/' + encodeURIComponent(sym) +
+                               '?source=yfinance&interval=D&adjusted=false');
+      if (!res.ok) return;
+      const { payload } = await res.json();
+      // A freshly-fetched payload carries the server's startup params, not
+      // whatever's currently in effect — same recompute the "add symbol"
+      // flow already does for the same reason (see api_add's handler above).
+      if (currentParams) recomputeIndicatorsFor(payload, currentParams);
+      YF_PAYLOADS[yfKey(sym, false, 'D')] = payload;
+      ALL.symbols[sym] = payload;
+      renderWatchlistPanel();
+      renderAlertsPanel();
+    } catch (err) {
+      console.error('alert preload failed for', sym, err.message);
+    }
+  }));
+}
+
 select(current);
+preloadAlertSymbols();
 addEventListener('resize', resizeChartToContainer);
 </script>
 """

@@ -39,6 +39,7 @@ from .viz import (
     _TEMPLATE,
     _ladders,
     build_payload,
+    indicator_params_out,
     patterns_for_trend_bars,
 )
 
@@ -213,49 +214,30 @@ def bars_payload_for(symbol: str, source: str, interval: str, adjusted: bool = F
     )
 
 
-def _watchlist_and_payloads(watchlist: dict, default_symbol: str | None) -> tuple[dict, dict]:
-    """Only 持有 (held), 特別關注 (special), and whichever symbol the sidebar
-    will default to on open (`default_symbol` — the first ticker in the
-    reconciled layout) are fetched eagerly at page load — everything else
-    appears in the sidebar with no preloaded payload, fetched lazily by the
-    frontend (GET /api/bars) only when the user actually switches to it.
-    `default_symbol` MUST be included here: the bootstrap script reads
-    `ALL.symbols[current].params` directly, with no fallback, so the
-    symbol it opens on has to already have a payload — that held true by
-    accident when `current` was always Object.keys(watchlist)[0] (usually
-    also held), but reordering the sidebar can put ANY ticker first now.
-    A fetch failure is skipped from both dicts, same resilience as before;
-    a symbol with none of these reasons to prefetch is never fetched here
-    at all, so it can't fail here — it succeeds or fails when selected.
-    """
-    payloads = {}
-    rendered = {}
-    for sym, tags in watchlist.items():
-        if not (tags.get("held") or tags.get("special") or sym == default_symbol):
-            rendered[sym] = tags
-            continue
-        try:
-            payloads[sym] = payload_for(sym)
-            rendered[sym] = tags
-        except Exception as exc:  # noqa: BLE001
-            # One dead ticker must not blank the whole page.
-            print(f"  skipping {sym}: {exc}")
-    return rendered, payloads
-
-
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
+    """No symbol payload is fetched here at all — the page ships with an
+    empty `symbols` map and renders its shell (sidebar, chart frame)
+    immediately. The frontend fetches the current symbol via the same
+    lazy GET /api/bars path it already uses for any non-preloaded symbol
+    (see `select()`/`activateSymbol()` in `_TEMPLATE`), then, once that's
+    on screen, background-fetches every 持有/特別關注 symbol so the Alerts
+    panel fills in without blocking the initial paint on all of them.
+    `defaultParams` substitutes for what used to be read off a preloaded
+    symbol's own payload (`ALL.symbols[current].params`) — the indicator
+    settings are shared across every symbol regardless, so there's no
+    need to wait on any particular one's fetch to know them.
+    """
     import json
 
     watchlist = wl.load()
     layout = wll.load(watchlist)
-    default_symbol = next((e["symbol"] for e in layout if e["type"] == "ticker"), None)
-    watchlist, payloads = _watchlist_and_payloads(watchlist, default_symbol)
     data = {
-        "symbols": payloads,
+        "symbols": {},
         "watchlist": watchlist,
         "layout": layout,
         "live": True,
+        "defaultParams": indicator_params_out(SETTINGS["params"]),
     }
     return (
         _TEMPLATE.replace("__BUNDLE__", BUNDLE.read_text(encoding="utf-8"))
